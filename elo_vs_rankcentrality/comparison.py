@@ -27,7 +27,8 @@ def rank_centrality(A, tol=1e-8, max_iters=100000):
     n = A.shape[0]
     W = np.zeros((n, n))
     for (i, j) in itertools.product(range(n), range(n)):
-        if A[i, j]: W[i, j] = A[i, j] / (A[i, j] + A[j, i])
+        if A[i, j] + A[j, i] > 0:  # Only process pairs with at least one comparison
+            W[i, j] = A[j, i] / (A[i, j] + A[j, i])  # FIXED: A[j,i] in numerator instead of A[i,j]
     
     # Compute a transition matrix P whose non-diagonal entries are proportional
     # to W but where every row sums to exactly 1.  To do this, we first compute
