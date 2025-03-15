@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 import numpy as np
-import scipy, random, itertools, sys
+import scipy, random, itertools, sys, argparse
 
 # For analysis purposes we track the number of iterations until convergence.
 global total_iters_centrality
 total_iters_centrality = 0
+
+# Global variable to track comparison mode
+global comparison_mode
+comparison_mode = "scalar"  # Default mode
 
 def rank_centrality(A, tol=1e-8, max_iters=100000):
     """
@@ -100,18 +104,33 @@ def rank_elo(comparison_matrix, K=32):
 def add_comparison(i, j, A):
     """
     Adds a comparison between nodes i and j to the comparison matrix A by
-    updating the weights A_ij and A_ji approriately.
+    updating the weights A_ij and A_ji appropriately.
     
-    Nodes are preferred in proportion to their numerical value plus one.  So
-    for example, node 4 is preferred to node 6 with probability 5/(5+7)
-    whereas node 6 is preferred to node 4 with probability 7/(7+5).
+    In scalar mode:
+        Nodes are preferred in proportion to their numerical value plus one.
+        For example, node 4 is preferred to node 6 with probability 5/(5+7)
+        whereas node 6 is preferred to node 4 with probability 7/(7+5).
+    
+    In binary mode:
+        The higher-valued node always wins (deterministic).
+        If j > i, then A[i,j] = 1 and A[j,i] = 0
+        If i > j, then A[i,j] = 0 and A[j,i] = 1
     """
-    # Weight nodes according to the node value plus one.  Zero node weights
-    # should be avoided since arcs to such nodes will never be followed in a
-    # random walk and hence do not contribute towards the graph connectivity.
-    w = (j + 1) / (i + j + 2)
-    A[i, j] += w
-    A[j, i] += 1 - w
+    global comparison_mode
+    
+    if comparison_mode == "binary":
+        # Binary comparison - higher value always wins
+        if j > i:
+            A[i, j] += 1  # j wins
+            A[j, i] += 0  # i loses
+        else:
+            A[i, j] += 0  # j loses
+            A[j, i] += 1  # i wins
+    else:  # scalar mode
+        # Weight nodes according to the node value plus one
+        w = (j + 1) / (i + j + 2)
+        A[i, j] += w
+        A[j, i] += 1 - w
 
 def make_comparison_matrix(n, extra_comparisons=0):
     """
@@ -187,51 +206,56 @@ def compare_convergence(n, max_comparisons=100000000):
     elo_comparisons = max_comparisons
     centrality_comparisons = max_comparisons
     
-    for extra in range(0, max_comparisons, max(1, n//10)):
+    # Use smaller step size for more precise measurement
+    step_size = max(1, n//20)
+    
+    for extra in range(0, max_comparisons, step_size):
+        # Use the same comparison matrix for both methods to ensure fair comparison
         comparison_matrix = make_comparison_matrix(n, extra)
         
         # Check ELO ranking
         if not elo_found:
             scores_elo = rank_elo(comparison_matrix)
-            # Debug print for ELO scores
-            print(f"\nELO scores at {extra} extra comparisons:")
-            for i in range(n):
-                print(f"Item {i}: {scores_elo[i]:.1f}")
             
-            # Check if higher-valued items have higher scores
-            incorrect_pairs = [(i, scores_elo[i], scores_elo[i+1]) 
-                             for i in range(n-1) 
-                             if scores_elo[i] <= scores_elo[i+1]]
-            if not incorrect_pairs:
+            # Check if ranking is correct (all items in descending order)
+            # We're checking if each item's score is higher than the next item's score
+            elo_correct = all(scores_elo[i] > scores_elo[i+1] for i in range(n-1))
+            
+            if elo_correct:
                 elo_found = True
                 elo_comparisons = extra + n - 1
-            else:
-                print(f"ELO incorrect pairs: {incorrect_pairs}")
+                print(f"\nELO converged after {elo_comparisons} comparisons")
         
         # Check rank_centrality ranking
         if not centrality_found:
             scores_centrality = rank_centrality(comparison_matrix)
-            # Debug print for centrality scores
-            print(f"\nCentrality scores at {extra} extra comparisons:")
-            for i in range(n):
-                print(f"Item {i}: {scores_centrality[i]:.4f}")
             
-            # Check if higher-valued items have higher scores
-            incorrect_pairs = [(i, scores_centrality[i], scores_centrality[i+1]) 
-                             for i in range(n-1) 
-                             if scores_centrality[i] <= scores_centrality[i+1]]
-            if not incorrect_pairs:
+            # Check if ranking is correct (all items in descending order)
+            centrality_correct = all(scores_centrality[i] > scores_centrality[i+1] for i in range(n-1))
+            
+            if centrality_correct:
                 centrality_found = True
                 centrality_comparisons = extra + n - 1
-            else:
-                print(f"Centrality incorrect pairs: {incorrect_pairs}")
+                print(f"\nRank Centrality converged after {centrality_comparisons} comparisons")
         
         if elo_found and centrality_found:
             break
             
         if extra % 1000 == 0:
             print(f"\nTried {extra} extra comparisons...")
-            print(f"Comparison matrix sum: {np.sum(comparison_matrix)}")
+            
+            # Print some diagnostic information
+            if not elo_found:
+                incorrect_elo = [(i, scores_elo[i], scores_elo[i+1]) 
+                               for i in range(n-1) 
+                               if scores_elo[i] <= scores_elo[i+1]]
+                print(f"ELO has {len(incorrect_elo)} incorrect pairs")
+                
+            if not centrality_found:
+                incorrect_centrality = [(i, scores_centrality[i], scores_centrality[i+1]) 
+                                      for i in range(n-1) 
+                                      if scores_centrality[i] <= scores_centrality[i+1]]
+                print(f"Centrality has {len(incorrect_centrality)} incorrect pairs")
     
     print(f"\nConvergence comparison for {n} items:")
     print(f"ELO needed {elo_comparisons} comparisons")
@@ -240,14 +264,32 @@ def compare_convergence(n, max_comparisons=100000000):
     return elo_comparisons, centrality_comparisons
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        n = int(sys.argv[1])
-        extra_comparisons = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-        iters = int(sys.argv[3]) if len(sys.argv) > 3 else 1
-        
-        for _ in range(iters):
-            run_test(n, extra_comparisons)
-        print(f'Total iterations: {total_iters_centrality}')
-        
-        # Add convergence comparison
-        compare_convergence(n)
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Compare ranking algorithms')
+    parser.add_argument('n', type=int, help='Number of items to rank')
+    parser.add_argument('extra_comparisons', type=int, nargs='?', default=0, 
+                        help='Number of extra comparisons beyond the spanning tree')
+    parser.add_argument('iters', type=int, nargs='?', default=1,
+                        help='Number of iterations to run')
+    parser.add_argument('--binary', action='store_true', 
+                        help='Use binary comparisons (higher value always wins)')
+    parser.add_argument('--scalar', action='store_true',
+                        help='Use scalar comparisons (default, weighted by node values)')
+    
+    args = parser.parse_args()
+    
+    # Set comparison mode based on flags
+    if args.binary:
+        comparison_mode = "binary"
+        print("Using binary comparison mode (higher value always wins)")
+    elif args.scalar or not args.binary:  # Default to scalar if neither or only scalar is specified
+        comparison_mode = "scalar"
+        print("Using scalar comparison mode (weighted by node values)")
+    
+    # Run tests
+    for _ in range(args.iters):
+        run_test(args.n, args.extra_comparisons)
+    print(f'Total iterations: {total_iters_centrality}')
+    
+    # Add convergence comparison
+    compare_convergence(args.n)
