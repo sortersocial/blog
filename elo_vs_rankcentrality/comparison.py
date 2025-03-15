@@ -76,6 +76,7 @@ def rank_elo(comparison_matrix, K=32):
     Returns:
         scores: list of ELO ratings for each item
     """
+    global comparison_mode
     n = len(comparison_matrix)
     scores = np.ones(n) * 1500  # Initialize all ratings to 1500
     
@@ -92,8 +93,15 @@ def rank_elo(comparison_matrix, K=32):
             
             # Calculate actual scores from comparison matrix
             total_games = comparison_matrix[i,j] + comparison_matrix[j,i]
-            actual_i = comparison_matrix[i,j] / total_games
-            actual_j = comparison_matrix[j,i] / total_games
+            
+            if comparison_mode == "scalar":
+                # In scalar mode, use the actual weights from the matrix
+                actual_i = comparison_matrix[i,j] / total_games
+                actual_j = comparison_matrix[j,i] / total_games
+            else:
+                # In binary mode, winner takes all
+                actual_i = 1.0 if comparison_matrix[i,j] > comparison_matrix[j,i] else 0.0
+                actual_j = 1.0 - actual_i
             
             # Update ratings
             scores[i] += K * (actual_i - expected_i)
